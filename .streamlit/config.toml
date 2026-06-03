@@ -1,0 +1,3 @@
+[client]
+# viewer 模式：隐藏 Deploy，保留汉堡菜单
+toolbarMode = "viewer"

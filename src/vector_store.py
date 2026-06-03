@@ -7,7 +7,7 @@ from src.config import COLLECTION_NAME, DATA_DIR
 
 
 class VectorStore:
-    """ChromaDB 向量存储封装."""
+    """ChromaDB 向量存储封装，支持多集合切换."""
 
     def __init__(
         self,
@@ -17,14 +17,40 @@ class VectorStore:
         if persist_directory is None:
             persist_directory = str(DATA_DIR / "chromadb")
 
+        self._persist_dir = persist_directory
         self._client = chromadb.PersistentClient(
             path=persist_directory,
             settings=Settings(anonymized_telemetry=False),
         )
+        self._collection_name = collection_name
         self._collection = self._client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+    @property
+    def collection_name(self) -> str:
+        return self._collection_name
+
+    def switch_collection(self, name: str) -> None:
+        """切换到指定集合，不存在则自动创建."""
+        self._collection_name = name
+        self._collection = self._client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def list_collections(self) -> List[str]:
+        """列出所有集合名称."""
+        cols = self._client.list_collections()
+        return sorted([c.name for c in cols])
+
+    def delete_collection(self, name: str) -> None:
+        """删除指定集合."""
+        try:
+            self._client.delete_collection(name)
+        except Exception:
+            pass
 
     def add(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
         """批量添加文档块到向量库."""
@@ -79,14 +105,15 @@ class VectorStore:
             ids = self._collection.get()["ids"]
             self._collection.delete(ids=ids)
 
-    def has_content(self, text: str) -> bool:
-        """检查内容是否已存在."""
+    def get_text_hashes(self) -> set:
+        """返回已有文本的哈希集合（MD5前16位），内存友好的去重方案."""
+        import hashlib
         if self.count() == 0:
-            return False
-        results = self._collection.get(
-            where_document={"$contains": text[:100]}
-        )
-        return len(results["ids"]) > 0
+            return set()
+        data = self._collection.get(include=["documents"])
+        if not data["documents"]:
+            return set()
+        return {hashlib.md5(d.encode()).hexdigest()[:16] for d in data["documents"]}
 
     def get_sources(self) -> List[str]:
         """返回所有不重复的源文件名列表."""
